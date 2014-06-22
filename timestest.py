@@ -101,12 +101,12 @@ class MostPopularInterface:
       for k, v in self.authors[aut].iteritems():
          score += v
          count+= 1
-      score_authors.append((aut, score * (1 + (0.1 * count))))
-    for (a, s) in sorted(score_authors, key=lambda tup: tup[1], reverse=True): 
+      score_authors.append((aut, float((float(calls * 20) - float(score / count)) /count)/ float(calls * 20)))
+    for (a, s) in sorted(score_authors, key=lambda tup: tup[1], reverse=False): 
       self.author_file.write(str(a) + ', ' + str(s) + '\n')
 
 x = MostPopularInterface()
 
-x.top_authors(calls=1000)
+x.top_authors(calls=100)
 
 
