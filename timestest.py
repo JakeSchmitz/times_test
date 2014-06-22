@@ -27,13 +27,17 @@ import requests
 import json
 
 class MostPopularInterface:
+
   todays_file = "./data/" + time.strftime("%d_%m_%Y") + ".csv"
-  output_dir = open(todays_file, "w+")
   calls_today = 0
   today_began = time
+
   def __init__(self):
     calls_today = 0
     today_began = time
+    if not os.path.exists('./data'):
+      os.makedirs('./data')
+    self.output_dir = open(self.todays_file, "w+")
 
   def __del__(self):
     self.output_dir.close()
