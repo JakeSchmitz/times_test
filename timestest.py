@@ -26,7 +26,8 @@ from __future__ import print_function
 import os
 import time
 import requests
-import json
+import simplejson
+import sys
 
 class author:
   #articles is a dict mapping article id to a tuple (mostviewed score, mostshared score, mostemailed score)  
@@ -44,10 +45,10 @@ class author:
       
   def rating(self):
     #Here are the weights I assign to different parts of an author
-    viral_boost = 1
-    view_boost = 3
-    share_boost = 4
-    email_boost = 6
+    viral_boost = 2
+    view_boost = 5
+    share_boost = 5
+    email_boost = 5
     rating = 0
     for art in self.articles:
       a = self.articles[art]
@@ -58,7 +59,8 @@ class author:
       if "mostemailed" in a:
         rating += a["mostemailed"] * email_boost  
       if "mostviewed" and "mostshared" and "mostemailed" in a:
-        rating += ((a["mostshared"] + a["mostemailed"]) / 2) * viral_boost  
+              if a["mostviewed"] < (a["mostshared"] + a["mostemailed"]) / 2:
+          rating += (((a["mostshared"] + a["mostemailed"]) / 2) - a["mostviewed"]) * viral_boost  
     return rating
 
 class MostPopularInterface:
@@ -70,37 +72,50 @@ class MostPopularInterface:
   shared_authors = dict()
   emailed_authors = dict()
 
-  def __init__(self):
+  def __init__(self, tframe=1):
     calls_today = 0
     today_began = time
     if not os.path.exists('./data'):
       os.makedirs('./data')
-    self.output_dir = open(self.todays_file, "w+")
+    if not os.path.exists('./data/daily'):
+      os.makedirs('./data/daily')
+    if not os.path.exists('./data/monthly'):
+      os.makedirs('./data/monthly')
+    if len(sys.argv) > 1:
+      dur = sys.argv[1]
+    else:
+      dur = tframe
+    if dur == 1:
+      self.todays_file = "./data/daily/" + time.strftime("%d_%m_%Y") + ".csv"
+    if dur == 7:
+      self.todays_file = "./data/monthly/" + time.strftime("%m_%Y") + ".csv"
+    self.output_file = open(self.todays_file, "w+")
     self.author_file = open("./data/authors" + time.strftime("%d_%m_%Y") + ".csv", "w+")
 
   def __del__(self):
-    self.output_dir.close()
+    self.output_file.close()
+    self.author_file.close()
 
   def popular_query_url(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
-    return 'http://api.nytimes.com/svc/mostpopular/v2/' + resourcetype + "/" + sections + "/" + str(timeperiod) + "?api-key=" + os.environ['MOST_POPULAR_KEY'] + '&offset=' + str(offset)
+    return 'http://api.nytimes.com/svc/mostpopular/v2/' + resourcetype + "/" + sections + "/" + str(timeperiod) + "?api-key=" + os.environ['MOST_POPULAR_KEY2'] + '&offset=' + str(offset)
 
   def section_list_url(self, resourcetype="mostviewed"):
-    return 'http://api.nytimes.com/svc/mostpopular/v2/' + resourcetype + '/sections-list?api-key=' + os.environ['MOST_POPULAR_KEY']
+    return 'http://api.nytimes.com/svc/mostpopular/v2/' + resourcetype + '/sections-list?api-key=' + os.environ['MOST_POPULAR_KEY2']
 
   def make_request(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0, calls=1):
     r = list()
     c = 0
     for x in range(calls):
-      for key in json.loads(requests.get(self.popular_query_url(resourcetype, sections, timeperiod, c * 20)).text)['results']:
+      for key in simplejson.loads(requests.get(self.popular_query_url(resourcetype, sections, timeperiod, c * 20)).text)['results']:
         r.append(key)
       c += 1
-      if c % 5 == 0:
-        time.sleep(1)
+      if c % 8 == 0:
+        time.sleep(0.95)
     return r
 
   def get_sections(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
     r = requests.get(self.section_list_url(resourcetype))
-    return json.loads(r.text)['results'] 
+    return simplejson.loads(r.text)['results'] 
 
   def article_tags(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
     for article in self.make_request(resourcetype, sections, timeperiod, offset,4):
@@ -139,12 +154,20 @@ class MostPopularInterface:
     for aut in self.authors:
       score_authors.append((aut, self.authors[aut].rating()))
     for (a, s) in sorted(score_authors, key=lambda tup: tup[1], reverse=True)[:100]: 
-      self.author_file.write(str(a) + ', ' + str(s) + '\n')
+      self.output_file.write(str(a) + ', ' + str(s) + '\n')
 
+  def analyze(self, tp=30, cs=10):
+    x.scrape_authors(resourcetype="mostviewed", timeperiod=tp, calls=cs)
+    x.scrape_authors(resourcetype="mostshared", timeperiod=tp, calls=cs)
+    x.scrape_authors(resourcetype="mostemailed", timeperiod=tp, calls=cs)
+    x.rate_authors()
+
+dur = 1
+
+if len(sys.argv) > 1:
+  dur = sys.argv[1]
+
+#print(str(dur))
 x = MostPopularInterface()
+x.analyze(tp=dur, cs=25)
 
-x.scrape_authors(resourcetype="mostviewed", calls=50)
-x.scrape_authors(resourcetype="mostshared", calls=50)
-x.scrape_authors(resourcetype="mostemailed", calls=50)
-
-x.rate_authors()
