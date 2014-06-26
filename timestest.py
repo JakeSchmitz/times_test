@@ -28,12 +28,48 @@ import time
 import requests
 import json
 
+class author:
+  #articles is a dict mapping article id to a tuple (mostviewed score, mostshared score, mostemailed score)  
+
+  def __init__(self):
+    self.articles = dict()
+
+  # Note that score should be lowestrank - docrank
+  def add_article(self, resourcetype, articleid, score):
+    if articleid in self.articles:
+      self.articles[articleid][resourcetype] = score
+    else:
+      self.articles[articleid] = dict()
+      self.articles[articleid][resourcetype] = score
+      
+  def rating(self):
+    #Here are the weights I assign to different parts of an author
+    viral_boost = 1
+    view_boost = 3
+    share_boost = 4
+    email_boost = 6
+    rating = 0
+    for art in self.articles:
+      a = self.articles[art]
+      if "mostviewed" in a:
+        rating += a["mostviewed"] * view_boost       
+      if "mostshared" in a:
+        rating += a["mostshared"] * share_boost       
+      if "mostemailed" in a:
+        rating += a["mostemailed"] * email_boost  
+      if "mostviewed" and "mostshared" and "mostemailed" in a:
+        rating += ((a["mostshared"] + a["mostemailed"]) / 2) * viral_boost  
+    return rating
+
 class MostPopularInterface:
 
   todays_file = "./data/" + time.strftime("%d_%m_%Y") + ".csv"
   calls_today = 0
   today_began = time
   authors = dict()
+  shared_authors = dict()
+  emailed_authors = dict()
+
   def __init__(self):
     calls_today = 0
     today_began = time
@@ -66,7 +102,7 @@ class MostPopularInterface:
     r = requests.get(self.section_list_url(resourcetype))
     return json.loads(r.text)['results'] 
 
-  def top_articles(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
+  def article_tags(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
     for article in self.make_request(resourcetype, sections, timeperiod, offset,4):
       self.output_dir.write('Article ID: ' + str(article['id']) + ', ')
       self.output_dir.write('Title: '+ article['title'].encode('utf-8') + " Author(s): " + article['byline'].strip('By ').lower().replace(' and ', ', ').title().encode('utf-8') + "\n")
@@ -84,29 +120,31 @@ class MostPopularInterface:
         places += loc.encode('utf-8') + ' '
       self.output_dir.write(keywords + '\n' + people + '\n' + orgs + '\n' + places + '\n')
 
-  def top_authors(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0, calls=1):
+  def scrape_authors(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0, calls=1):
     for i, article in enumerate(self.make_request(resourcetype, sections, timeperiod, offset, calls)):
       auts = article['byline'].strip('By ').replace('and ', ',').replace(', ,', ',').replace(', ', ',').title().encode('utf-8').split(',')
       if ',' in auts: auts.remove(',')
       if '' in auts: auts.remove('')
-      for aut in auts:
-        if aut not in self.authors:
-          self.authors[aut] = {str(article['id']): (calls * 20) - i }
-        else:
-          self.authors[aut][str(article['id'])] = (calls * 20) - i
+      if 'id' in article:
+        for aut in auts:
+          if aut not in self.authors:
+            self.authors[aut] = author()
+            self.authors[aut].add_article(resourcetype, article['id'], (calls * 20) - i)
+          else:
+            self.authors[aut].add_article(resourcetype, article['id'], (calls * 20) - i)
+            #self.authors[aut][str(article['id'])] = (calls * 20) - i
+
+  def rate_authors(self):
     score_authors = [] 
     for aut in self.authors:
-      score = 0
-      count = 0
-      for k, v in self.authors[aut].iteritems():
-         score += v
-         count+= 1
-      score_authors.append((aut, float((float(calls * 20) - float(score / count)) /count)/ float(calls * 20)))
-    for (a, s) in sorted(score_authors, key=lambda tup: tup[1], reverse=False): 
+      score_authors.append((aut, self.authors[aut].rating()))
+    for (a, s) in sorted(score_authors, key=lambda tup: tup[1], reverse=True)[:100]: 
       self.author_file.write(str(a) + ', ' + str(s) + '\n')
 
 x = MostPopularInterface()
 
-x.top_authors(calls=100)
+x.scrape_authors(resourcetype="mostviewed", calls=50)
+x.scrape_authors(resourcetype="mostshared", calls=50)
+x.scrape_authors(resourcetype="mostemailed", calls=50)
 
-
+x.rate_authors()
