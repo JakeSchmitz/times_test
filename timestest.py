@@ -26,44 +26,85 @@ from __future__ import print_function
 import os
 import time
 import requests
-import simplejson
 import sys
 
 class author:
-  #articles is a dict mapping article id to a tuple (mostviewed score, mostshared score, mostemailed score)  
+  #articles is a dict mapping article url to a tuple (mostviewed score, mostshared score, mostemailed score)  
+  viral_boost = 1
+  view_boost = 100
+  share_boost = 100
+  email_boost = 100
+  rec_boost = 5
+  comment_boost = 15
 
-  def __init__(self):
+  def __init__(self, name):
     self.articles = dict()
+    self.article_comments = dict()
+    self.article_recs = dict()    
+    self.name = name
 
   # Note that score should be lowestrank - docrank
-  def add_article(self, resourcetype, articleid, score):
-    if articleid in self.articles:
-      self.articles[articleid][resourcetype] = score
+  def add_article(self, resourcetype, articleurl, score):
+    if articleurl in self.articles:
+      self.articles[articleurl][resourcetype] = score
     else:
-      self.articles[articleid] = dict()
-      self.articles[articleid][resourcetype] = score
+      self.articles[articleurl] = dict()
+      self.articles[articleurl][resourcetype] = score
+
+  def scrape_article_comments(self, articleurl):
+    #if articleurl in self.articles:
+    cdata = requests.get(self.comments_url(articleurl))
+    print(str(cdata))
+    try: 
+      commentdata = cdata.json()['results']
+      print(articleurl)
+      print('Num comments = ' + str(commentdata['totalCommentsFound']))
+      self.article_comments[articleurl] = commentdata['totalCommentsFound']
+      self.article_recs[articleurl] = 0
+      for c in commentdata['comments']:
+        self.article_recs[articleurl] += c['recommendations']
+      print('Num recommendations = ' + str(self.article_recs[articleurl]))
+    except ValueError:
+      print('Couldnt find community data for article by ' + self.name + '  ' + articleurl)
       
+  def comments_url(self, articleurl, sort='recommended'):
+    return 'http://api.nytimes.com/svc/community/v2/comments/url/exact-match.json?url=' + articleurl + "&sort=" + sort + "&api-key=" + os.environ['COMMUNITY_API_KEY2']
+
   def rating(self):
     #Here are the weights I assign to different parts of an author
-    viral_boost = 2
-    view_boost = 5
-    share_boost = 5
-    email_boost = 5
     rating = 0
     for art in self.articles:
       a = self.articles[art]
       if "mostviewed" in a:
-        rating += a["mostviewed"] * view_boost       
+        rating += a["mostviewed"] * self.view_boost       
       if "mostshared" in a:
-        rating += a["mostshared"] * share_boost       
+        rating += a["mostshared"] * self.share_boost       
       if "mostemailed" in a:
-        rating += a["mostemailed"] * email_boost  
-      if "mostviewed" and "mostshared" and "mostemailed" in a:
-              if a["mostviewed"] < (a["mostshared"] + a["mostemailed"]) / 2:
-          rating += (((a["mostshared"] + a["mostemailed"]) / 2) - a["mostviewed"]) * viral_boost  
+        rating += a["mostemailed"] * self.email_boost  
+      if "mostviewed" in a and "mostshared" in a and "mostemailed" in a:
+        if a["mostviewed"] < (a["mostshared"] + a["mostemailed"]) / 2:
+          rating += (((a["mostshared"] + a["mostemailed"]) / 2) - a["mostviewed"]) * self.viral_boost  
+      if art in self.article_comments:
+        rating += self.article_comments[art] * self.comment_boost
+      if art in self.article_recs:
+        rating += self.article_recs[art] * self.rec_boost
+  
     return rating
 
-class MostPopularInterface:
+  def export(self):
+    score = self.rating()
+    top_articles = 0
+    total_comments = 0
+    total_recs = 0
+    for url  in self.articles:
+      if url in self.article_comments:
+        total_comments += self.article_comments[url]
+      if url in self.article_recs:
+        total_recs += self.article_recs[url]
+      top_articles += 1
+    return str(self.name) + "," + str(score) + "," + str(top_articles) + "," + str(total_comments) + "," + str(total_recs)
+
+class NYTimes:
 
   todays_file = "./data/" + time.strftime("%d_%m_%Y") + ".csv"
   calls_today = 0
@@ -77,20 +118,22 @@ class MostPopularInterface:
     today_began = time
     if not os.path.exists('./data'):
       os.makedirs('./data')
-    if not os.path.exists('./data/daily'):
-      os.makedirs('./data/daily')
-    if not os.path.exists('./data/monthly'):
-      os.makedirs('./data/monthly')
-    if len(sys.argv) > 1:
-      dur = sys.argv[1]
-    else:
-      dur = tframe
-    if dur == 1:
-      self.todays_file = "./data/daily/" + time.strftime("%d_%m_%Y") + ".csv"
-    if dur == 7:
-      self.todays_file = "./data/monthly/" + time.strftime("%m_%Y") + ".csv"
+    if not os.path.exists('./data/authors'):
+      os.makedirs('./data/authors')
+    if not os.path.exists('./data/' + time.strftime("%Y")):
+      os.makedirs('./data/' + time.strftime("%Y"))
+    if not os.path.exists('./data/' + time.strftime("%Y")  + '/' + time.strftime("%m")):
+      os.makedirs('./data/' + time.strftime("%Y")+ '/' + time.strftime("%m"))
+    self.todays_directory = './data/'+ time.strftime("%Y") + "/" + time.strftime("%m") + '/' 
+    dur = tframe
+    if dur is 1:
+      self.todays_file = self.todays_directory + 'today.csv'
+    if dur is 7:
+      self.todays_file = self.todays_directory + 'thisweek.csv'
+    if dur is 30:
+      self.todays_file = self.todays_directory + 'thismonth.csv'
     self.output_file = open(self.todays_file, "w+")
-    self.author_file = open("./data/authors" + time.strftime("%d_%m_%Y") + ".csv", "w+")
+    self.author_file = open('./data/authors/' + time.strftime('%d_%m_%Y') +'tf' + str(dur) +'.csv', "w+")
 
   def __del__(self):
     self.output_file.close()
@@ -106,20 +149,26 @@ class MostPopularInterface:
     r = list()
     c = 0
     for x in range(calls):
-      for key in simplejson.loads(requests.get(self.popular_query_url(resourcetype, sections, timeperiod, c * 20)).text)['results']:
-        r.append(key)
-      c += 1
-      if c % 8 == 0:
-        time.sleep(0.95)
+      try:
+        for key in requests.get(self.popular_query_url(resourcetype, sections, timeperiod, c * 20)).json()['results']:
+          try: 
+            r.append(key)
+          except ValueError:
+            print('Failed while trying to decode json object from request to popular api\n')
+        c += 1
+        if c % 8 == 0:
+          time.sleep(0.95)
+      except ValueError:
+        print('Fuck this')
     return r
 
   def get_sections(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
     r = requests.get(self.section_list_url(resourcetype))
-    return simplejson.loads(r.text)['results'] 
+    return r.json()['results'] 
 
   def article_tags(self, resourcetype="mostviewed", sections="all-sections", timeperiod=30, offset=0):
     for article in self.make_request(resourcetype, sections, timeperiod, offset,4):
-      self.output_dir.write('Article ID: ' + str(article['id']) + ', ')
+      self.output_dir.write('Article URL: ' + str(article['url']) + ', ')
       self.output_dir.write('Title: '+ article['title'].encode('utf-8') + " Author(s): " + article['byline'].strip('By ').lower().replace(' and ', ', ').title().encode('utf-8') + "\n")
       keywords = '\tKeywords: '
       for des in article['des_facet']:
@@ -140,14 +189,14 @@ class MostPopularInterface:
       auts = article['byline'].strip('By ').replace('and ', ',').replace(', ,', ',').replace(', ', ',').title().encode('utf-8').split(',')
       if ',' in auts: auts.remove(',')
       if '' in auts: auts.remove('')
-      if 'id' in article:
+      if 'url' in article:
         for aut in auts:
           if aut not in self.authors:
-            self.authors[aut] = author()
-            self.authors[aut].add_article(resourcetype, article['id'], (calls * 20) - i)
+            self.authors[aut] = author(aut)
+            self.authors[aut].add_article(resourcetype, article['url'], ((calls * 20) - i) / (calls * 20))
           else:
-            self.authors[aut].add_article(resourcetype, article['id'], (calls * 20) - i)
-            #self.authors[aut][str(article['id'])] = (calls * 20) - i
+            self.authors[aut].add_article(resourcetype, article['url'], ((calls * 20) - i)/(calls*20))
+          self.authors[aut].scrape_article_comments(article['url'])
 
   def rate_authors(self):
     score_authors = [] 
@@ -155,19 +204,24 @@ class MostPopularInterface:
       score_authors.append((aut, self.authors[aut].rating()))
     for (a, s) in sorted(score_authors, key=lambda tup: tup[1], reverse=True)[:100]: 
       self.output_file.write(str(a) + ', ' + str(s) + '\n')
+      self.author_file.write(self.authors[a].export() + '\n')
 
   def analyze(self, tp=30, cs=10):
     x.scrape_authors(resourcetype="mostviewed", timeperiod=tp, calls=cs)
     x.scrape_authors(resourcetype="mostshared", timeperiod=tp, calls=cs)
     x.scrape_authors(resourcetype="mostemailed", timeperiod=tp, calls=cs)
     x.rate_authors()
+#    x.export_author_data()
 
-dur = 1
+#dur = 1
 
-if len(sys.argv) > 1:
-  dur = sys.argv[1]
+#if len(sys.argv) > 1:
+#  dur = sys.argv[1]
 
 #print(str(dur))
-x = MostPopularInterface()
-x.analyze(tp=dur, cs=25)
-
+x = NYTimes(1)
+x.analyze(tp=1, cs=10)
+y = NYTimes(7)
+y.analyze(tp=7, cs=10)
+z = NYTimes(30)
+z.analyze(tp=30, cs=10)
